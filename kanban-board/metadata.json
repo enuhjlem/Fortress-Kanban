@@ -1,0 +1,6 @@
+{
+  "name": "Kanban Board",
+  "description": "A secure task-management Kanban board featuring real-time data persistence, drag-and-drop workflow columns, and user isolates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

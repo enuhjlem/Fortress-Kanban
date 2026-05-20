@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety catch-all net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Global safety helpers
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    function isSignedIn() { 
+      return request.auth != null; 
+    }
+    
+    function incoming() { 
+      return request.resource.data; 
+    }
+    
+    function existing() { 
+      return resource.data; 
+    }
+    
+    // Validation helpers
+    function isValidBoard(data) {
+      return data.keys().hasAll(['id', 'user_id', 'name', 'created_at'])
+        && data.keys().size() == 4
+        && data.id is string && data.id.size() <= 128
+        && data.user_id is string && data.user_id == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.created_at is timestamp;
+    }
+    
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'user_id', 'board_id', 'status', 'title', 'created_at'])
+        && (data.keys().size() >= 6 && data.keys().size() <= 9)
+        && data.id is string && data.id.size() <= 128
+        && data.user_id is string && data.user_id == request.auth.uid
+        && data.board_id is string && data.board_id.size() <= 128
+        && data.status is string && (data.status == 'To Do' || data.status == 'In Progress' || data.status == 'Done')
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && data.created_at is timestamp
+        // Optional fields checks
+        && (!data.keys().hasAny(['description']) || (data.description is string && data.description.size() <= 2000))
+        && (!data.keys().hasAny(['due_date']) || (data.due_date is timestamp || data.due_date == null || data.due_date is string))
+        && (!data.keys().hasAny(['priority_tags']) || (data.priority_tags is string && (data.priority_tags == 'Low' || data.priority_tags == 'Medium' || data.priority_tags == 'High' || data.priority_tags == 'Critical')));
+    }
+    
+    // Match Board rules
+    match /boards/{boardId} {
+      allow get: if isSignedIn() && existing().user_id == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(boardId) && boardId == incoming().id && isValidBoard(incoming()) && incoming().created_at == request.time;
+      allow delete: if isSignedIn() && existing().user_id == request.auth.uid;
+      allow update: if isSignedIn() && existing().user_id == request.auth.uid && isValidBoard(incoming()) && incoming().user_id == existing().user_id && incoming().created_at == existing().created_at && incoming().diff(existing()).affectedKeys().hasOnly(['name']);
+    }
+    
+    // Match Task rules
+    match /tasks/{taskId} {
+      allow get: if isSignedIn() && existing().user_id == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(taskId) && taskId == incoming().id && isValidTask(incoming()) && incoming().created_at == request.time
+        && exists(/databases/$(database)/documents/boards/$(incoming().board_id))
+        && get(/databases/$(database)/documents/boards/$(incoming().board_id)).data.user_id == request.auth.uid;
+      allow delete: if isSignedIn() && existing().user_id == request.auth.uid;
+      allow update: if isSignedIn() && existing().user_id == request.auth.uid && isValidTask(incoming()) && incoming().user_id == existing().user_id && incoming().board_id == existing().board_id && incoming().created_at == existing().created_at
+        && (
+          // Action 1: Update status ONLY (Drag-and-Drop)
+          incoming().diff(existing()).affectedKeys().hasOnly(['status']) ||
+          // Action 2: Update content attributes editing
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'due_date', 'priority_tags']) ||
+          // Action 3: Complete edits combo (Status & Content)
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'title', 'description', 'due_date', 'priority_tags'])
+        );
+    }
+  }
+}
